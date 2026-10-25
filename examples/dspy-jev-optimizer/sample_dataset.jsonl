@@ -1,0 +1,20 @@
+{"state":{"ticket":"I was charged twice for the Pro plan this month."},"expected":"billing"}
+{"state":{"ticket":"Where can I download my invoice for August?"},"expected":"billing"}
+{"state":{"ticket":"Please refund the duplicate annual renewal."},"expected":"billing"}
+{"state":{"ticket":"My card keeps getting declined when I try to renew."},"expected":"billing"}
+{"state":{"ticket":"The API returns 500 whenever I upload a PDF."},"expected":"technical"}
+{"state":{"ticket":"OAuth callback fails with invalid redirect URI."},"expected":"technical"}
+{"state":{"ticket":"The desktop app crashes immediately after the update."},"expected":"technical"}
+{"state":{"ticket":"How do I configure the webhook signature verification?"},"expected":"technical"}
+{"state":{"ticket":"Can you quote 200 seats for our company?"},"expected":"sales"}
+{"state":{"ticket":"We need a demo before procurement approves the purchase."},"expected":"sales"}
+{"state":{"ticket":"What enterprise plans are available if we have 5,000 users?"},"expected":"sales"}
+{"state":{"ticket":"Do you offer volume pricing for universities?"},"expected":"sales"}
+{"state":{"ticket":"Please change the email address on my account."},"expected":"other"}
+{"state":{"ticket":"Where is your privacy policy?"},"expected":"other"}
+{"state":{"ticket":"I want to apply for a job at your company."},"expected":"other"}
+{"state":{"ticket":"Can I change the name shown on my profile?"},"expected":"other"}
+{"state":{"ticket":"I upgraded yesterday but my invoice still shows the old amount."},"expected":"billing"}
+{"state":{"ticket":"I paid successfully, but the app still says my subscription is inactive."},"expected":"technical"}
+{"state":{"ticket":"Before we buy, does the business plan support SSO?"},"expected":"sales"}
+{"state":{"ticket":"I forgot my password and cannot sign in."},"expected":"technical"}

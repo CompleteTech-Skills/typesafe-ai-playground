@@ -1,0 +1,69 @@
+%%{init: {"theme":"base","themeVariables":{"background":"#0B1020","primaryColor":"#111A33","primaryTextColor":"#F8FAFC","primaryBorderColor":"#7C3AED","lineColor":"#94A3B8","secondaryColor":"#0F766E","tertiaryColor":"#172554","clusterBkg":"#0E162C","clusterBorder":"#334155","fontFamily":"Inter, ui-sans-serif, system-ui, sans-serif"},"flowchart":{"curve":"basis","nodeSpacing":46,"rankSpacing":66,"htmlLabels":true}}}%%
+flowchart LR
+    classDef data fill:#0F172A,stroke:#38BDF8,stroke-width:2px,color:#F8FAFC
+    classDef dspy fill:#1E1B4B,stroke:#A78BFA,stroke-width:2px,color:#F8FAFC
+    classDef jev fill:#052E2B,stroke:#2DD4BF,stroke-width:2px,color:#F8FAFC
+    classDef eval fill:#3F1D2E,stroke:#FB7185,stroke-width:2px,color:#F8FAFC
+    classDef decision fill:#422006,stroke:#FBBF24,stroke-width:2px,color:#FFF7ED
+    classDef deploy fill:#052E16,stroke:#4ADE80,stroke-width:3px,color:#F0FDF4
+    classDef note fill:#111827,stroke:#64748B,stroke-width:1px,color:#CBD5E1,stroke-dasharray: 4 3
+
+    subgraph DATA["1 · LABELED EVALUATION CORPUS"]
+      direction TB
+      Train[("TRAIN<br/><b>Known labels</b><br/>Prompt search")]
+      Val[("VALIDATION<br/><b>Candidate selection</b><br/>Never fit directly")]
+      Test[("HIDDEN TEST<br/><b>Final verification</b><br/>Run after optimization")]
+    end
+
+    subgraph OPT["2 · DSPy OPTIMIZATION LAYER"]
+      direction TB
+      Seed["SEED JEV PROGRAM<br/><b>instructions + criteria</b>"]
+      Refine["DSPy REFINER<br/><b>proposal LM</b><br/>Generate candidate program"]
+      Analyze["FAILURE ANALYZER<br/><b>error slices + probability gaps</b>"]
+      Gate{"VALIDATION<br/><b>fitness improved?</b>"}
+      Best["BEST-SO-FAR<br/><b>freeze winning candidate</b>"]
+      Search["SEARCH SPACE<br/>instructions · criteria · decomposition<br/>thresholds · weights"]:::note
+    end
+
+    subgraph JEV["3 · TYPESAFE AI / JEV"]
+      direction TB
+      State["APPLICATION STATE<br/><b>structured JSON</b><br/>facts · context · policy"]
+      Questions["TYPED QUESTIONS<br/><b>Choice · Noul · Score</b><br/>narrow semantic judgments"]
+      Model[["JEV / SYSTEM ONE<br/><b>typed probabilistic inference</b>"]]
+      Output["TYPED OUTPUT<br/><b>answer + probabilities</b><br/>confidence where applicable"]
+    end
+
+    subgraph EVAL["4 · OBJECTIVE FUNCTION"]
+      direction TB
+      Metrics["QUALITY METRICS<br/><b>Accuracy / Macro-F1</b><br/>Brier · ECE · log loss"]
+      Fitness["COMPOSITE FITNESS<br/><b>quality − cost − latency</b>"]
+    end
+
+    Deploy["OPTIMIZED JEV PROGRAM<br/><b>versioned · reproducible · deployable</b>"]
+
+    Train --> Refine
+    Seed --> Refine
+    Search -. constrains .-> Refine
+    Refine --> Questions
+    State --> Model
+    Questions --> Model
+    Model --> Output
+    Output --> Metrics
+    Train --> Metrics
+    Metrics --> Fitness
+    Fitness --> Analyze
+    Analyze --> Refine
+    Fitness --> Gate
+    Val --> Gate
+    Gate -- "YES" --> Best
+    Gate -- "NO" --> Seed
+    Best --> Seed
+    Best --> Deploy
+    Test -. "one final locked evaluation" .-> Deploy
+
+    class Train,Val,Test data
+    class Seed,Refine,Analyze,Best dspy
+    class State,Questions,Model,Output jev
+    class Metrics,Fitness eval
+    class Gate decision
+    class Deploy deploy

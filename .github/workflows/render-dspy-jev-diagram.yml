@@ -1,0 +1,132 @@
+name: Render DSPy Jev Mermaid
+
+on:
+  push:
+    branches:
+      - example/dspy-jev-optimizer
+    paths:
+      - "examples/dspy-jev-optimizer/architecture.mmd"
+      - ".github/workflows/render-dspy-jev-diagram.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    # Manual dispatch must not turn this feature-branch helper into a writer
+    # for arbitrary branches or tags.
+    if: github.ref == 'refs/heads/example/dspy-jev-optimizer'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
+      - name: Activate the repository's pnpm version
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.34.5 --activate
+          test "$(pnpm --version)" = "10.34.5"
+
+      - name: Render Mermaid SVG
+        run: |
+          pnpm --allow-build=puppeteer --package=@mermaid-js/mermaid-cli@11.17.0 dlx mmdc \
+            -p examples/dspy-jev-optimizer/puppeteer-config.json \
+            -i examples/dspy-jev-optimizer/architecture.mmd \
+            -o examples/dspy-jev-optimizer/architecture.svg \
+            -b '#0B1020'
+
+      - name: Render high-resolution Mermaid PNG
+        run: |
+          pnpm --allow-build=puppeteer --package=@mermaid-js/mermaid-cli@11.17.0 dlx mmdc \
+            -p examples/dspy-jev-optimizer/puppeteer-config.json \
+            -i examples/dspy-jev-optimizer/architecture.mmd \
+            -o examples/dspy-jev-optimizer/architecture-hd.png \
+            -b '#0B1020' \
+            -w 3200 \
+            -s 2
+
+      - name: Transfer rendered assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dspy-jev-diagram
+          path: |
+            examples/dspy-jev-optimizer/architecture.svg
+            examples/dspy-jev-optimizer/architecture-hd.png
+          if-no-files-found: error
+          retention-days: 1
+
+  commit:
+    needs: render
+    if: github.ref == 'refs/heads/example/dspy-jev-optimizer'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      # No dependency installation, rendering, or repository scripts run in
+      # this job. Only this job has a repository write credential.
+      - name: Checkout the rendered source commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Download this run's rendered assets outside the checkout
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dspy-jev-diagram
+          path: ${{ runner.temp }}/dspy-jev-diagram
+
+      - name: Validate and copy only the two regular output files
+        run: |
+          python3 -I - <<'PY'
+          import os
+          from pathlib import Path
+          import shutil
+          import stat
+
+          source = Path(os.environ["RUNNER_TEMP"]) / "dspy-jev-diagram"
+          workspace = Path(os.environ["GITHUB_WORKSPACE"])
+          destination = workspace / "examples" / "dspy-jev-optimizer"
+          names = {"architecture.svg", "architecture-hd.png"}
+          for directory in (source, workspace / "examples", destination):
+              if not stat.S_ISDIR(directory.lstat().st_mode):
+                  raise SystemExit(f"Expected a real directory: {directory}")
+          if {path.name for path in source.iterdir()} != names:
+              raise SystemExit("Unexpected or missing artifact files")
+          for name in names:
+              if not stat.S_ISREG((source / name).lstat().st_mode):
+                  raise SystemExit(f"Expected a regular artifact file: {name}")
+              target = destination / name
+              if target.is_symlink() or (target.exists() and not target.is_file()):
+                  raise SystemExit(f"Unsafe output path: {name}")
+          for name in names:
+              shutil.copyfile(source / name, destination / name)
+          PY
+
+      - name: Commit rendered assets
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- examples/dspy-jev-optimizer/architecture.svg examples/dspy-jev-optimizer/architecture-hd.png
+          if git diff --cached --quiet; then
+            echo "Rendered assets are already current."
+          else
+            git -c core.hooksPath=/dev/null commit -m "docs: render DSPy Jev Mermaid [skip ci]"
+            test "$(git rev-parse HEAD^)" = "$GITHUB_SHA"
+            # Compare-and-swap the exact source SHA: never overwrite a newer
+            # branch tip, including a concurrent reset or another render.
+            git -c core.hooksPath=/dev/null push \
+              --force-with-lease="refs/heads/example/dspy-jev-optimizer:$GITHUB_SHA" \
+              origin HEAD:refs/heads/example/dspy-jev-optimizer
+          fi
