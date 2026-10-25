@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import random
 from dataclasses import asdict, dataclass
@@ -10,6 +11,11 @@ from typing import Any
 
 import dspy
 from typesafe_sdk import Choice, TypeSafeClient
+
+
+# Example-local policy for approximately normalized, rounded SDK probabilities.
+# Keep accepted values unchanged; this is not an SDK-guaranteed error bound.
+PROBABILITY_SUM_TOLERANCE = 0.01
 
 
 @dataclass(frozen=True)
@@ -38,7 +44,7 @@ class RefineJevPrompt(dspy.Signature):
     current_program_json: str = dspy.InputField()
     metrics_json: str = dspy.InputField()
     failure_cases_json: str = dspy.InputField()
-    instructions: str = dspy.OutputField(desc="Replacement Jev Choice instructions")
+    jev_instructions: str = dspy.OutputField(desc="Replacement Jev Choice instructions")
     criteria_json: str = dspy.OutputField(desc="JSON object mapping the SAME label keys to improved definitions")
     hypothesis: str = dspy.OutputField(desc="Short explanation of what error pattern this candidate targets")
 
@@ -67,6 +73,30 @@ def _typed_choice(response: Any, question_id: str) -> Any:
     return response.answers[question_id]
 
 
+def _validated_probabilities(answer: Any, labels: list[str]) -> dict[str, float]:
+    probabilities = getattr(answer, "probabilities", None)
+    if not isinstance(probabilities, dict) or set(probabilities) != set(labels):
+        raise ValueError("Choice probabilities must contain exactly the configured label keys")
+    if answer.choice not in labels:
+        raise ValueError("Choice must be one of the configured labels")
+    for value in probabilities.values():
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or not 0.0 <= value <= 1.0
+        ):
+            raise ValueError("Choice probabilities must be finite numbers between 0 and 1")
+    # The small numerical allowance only avoids rejecting the decimal boundary
+    # due to binary floating-point representation; never fill or normalize values.
+    if not math.isclose(
+        math.fsum(probabilities.values()), 1.0, rel_tol=0.0,
+        abs_tol=PROBABILITY_SUM_TOLERANCE + 1e-12,
+    ):
+        raise ValueError("Choice probabilities must sum to approximately 1 (absolute tolerance 0.01)")
+    return dict(probabilities)
+
+
 def evaluate(
     client: TypeSafeClient,
     program: JevProgram,
@@ -74,6 +104,10 @@ def evaluate(
 ) -> tuple[dict[str, float], list[PredictionRecord]]:
     records: list[PredictionRecord] = []
     labels = list(program.criteria)
+    if not rows or not labels:
+        raise ValueError("Evaluation requires examples and configured labels")
+    if any(row.get("expected") not in labels for row in rows):
+        raise ValueError("Expected labels must be among the configured labels")
 
     for row in rows:
         response = client.system_one(
@@ -86,7 +120,7 @@ def evaluate(
             },
         )
         answer = _typed_choice(response, "label")
-        probabilities = {str(k): float(v) for k, v in answer.probabilities.items()}
+        probabilities = _validated_probabilities(answer, labels)
         records.append(
             PredictionRecord(
                 expected=row["expected"],
@@ -113,7 +147,7 @@ def evaluate(
     brier = 0.0
     for r in records:
         brier += sum(
-            (r.probabilities.get(label, 0.0) - (1.0 if label == r.expected else 0.0)) ** 2
+            (r.probabilities[label] - (1.0 if label == r.expected else 0.0)) ** 2
             for label in labels
         )
     brier /= max(1, len(records))
@@ -181,10 +215,12 @@ def optimize(
                 failure_cases_json=json.dumps(failures, indent=2),
             )
 
+            candidate: JevProgram | None = None
+            candidate_val: dict[str, float] | None = None
             try:
                 criteria = json.loads(proposal.criteria_json)
                 candidate = JevProgram(
-                    instructions=proposal.instructions.strip(),
+                    instructions=proposal.jev_instructions.strip(),
                     criteria=criteria,
                 )
                 validate_candidate(best, candidate)
@@ -197,8 +233,6 @@ def optimize(
                     )
                 )
             except Exception as exc:
-                candidate = best
-                candidate_val = best_val
                 accepted = False
                 proposal.hypothesis = f"Rejected candidate: {exc}"
 
@@ -209,11 +243,12 @@ def optimize(
                     "hypothesis": proposal.hypothesis,
                     "train_metrics": train_metrics,
                     "validation_metrics": candidate_val,
-                    "candidate": asdict(candidate),
+                    "candidate": asdict(candidate) if candidate is not None else None,
                 }
             )
 
             if accepted:
+                assert candidate is not None and candidate_val is not None
                 best = candidate
                 best_val = candidate_val
 

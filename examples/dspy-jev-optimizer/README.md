@@ -12,7 +12,15 @@ The important separation is:
 
 ![DSPy + Jev optimization architecture](architecture.svg)
 
-The editable Mermaid source is [`architecture.mmd`](architecture.mmd). The repository workflow renders it with Mermaid CLI 11.17.0 into both vector SVG and a high-resolution PNG.
+The editable Mermaid source is [`architecture.mmd`](architecture.mmd). This is a **conceptual architecture**, including possible extensions: the starter below only optimizes one `Choice` question's instructions and criteria, reports accuracy/Macro-F1/Brier, and selects by accuracy then Brier. It does not implement decomposition, threshold/weight search, ECE/log loss, or cost/latency optimization. A generated program is not independently verified or automatically deployed.
+
+### Rendering the diagram
+
+The [diagram workflow](../../.github/workflows/render-dspy-jev-diagram.yml) uses Node.js 22, pnpm 10.34.5, and Mermaid CLI 11.17.0 to generate both vector SVG and a high-resolution PNG. It runs on relevant pushes to `example/dspy-jev-optimizer`; manual runs are restricted to that same branch. It does not automatically refresh diagrams on `main` or run on pull requests.
+
+Rendering uses a read-only checkout with no persisted Git credential. Only the two output files are transferred to a separate write-capable job, which commits them to the feature branch if its tip still matches the source commit. A concurrent branch update rejects publication rather than overwriting it; rerun from the current branch tip. The intermediate artifact expires after one day. Review the generated assets with the source before merging.
+
+The CLI version is pinned, but its transient dependencies and browser download are not lockfile-frozen. The pnpm command explicitly permits Puppeteer's browser-install script in the read-only render job; no dependency install or repository script runs in the commit job.
 
 ```mermaid
 flowchart LR
@@ -62,6 +70,7 @@ For serious benchmarking, provide a larger private test set and keep it out of t
 Python 3.10+ is required.
 
 ```bash
+cd examples/dspy-jev-optimizer
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\\Scripts\\activate
 pip install -e .
@@ -78,6 +87,21 @@ Outputs are written under `runs/latest/`:
 - `best_program.json` — deployable Jev instructions + criteria;
 - `history.json` — every proposal, hypothesis, score, and acceptance decision;
 - `final_metrics.json` — validation metrics and the single hidden-test evaluation.
+
+### Offline tests
+
+After installing the example's dependencies, run this from the example directory:
+
+```bash
+python -m unittest discover -s tests -p 'test_*.py' -v
+```
+
+The tests use real SDK response models, synthetic HTTP responses, and mocked
+clients/proposals. They block socket connections and do not need API keys or call
+models. They cover the declared DSPy 3.0 minimum, whose `Signature.instructions`
+attribute must not be shadowed by an output field; the proposal output is named
+`jev_instructions` instead. Dependencies remain unpinned, so these tests are not a
+guarantee of compatibility with every future SDK/DSPy release.
 
 ## Selection objective
 
@@ -109,10 +133,31 @@ For production research, also consider:
 | `optimizer.py` | DSPy proposal loop + Jev evaluator |
 | `sample_dataset.jsonl` | Tiny runnable example dataset |
 | `architecture.mmd` | Full editable Mermaid architecture |
-| `architecture.svg` | Mermaid CLI vector render (generated in CI) |
-| `architecture-hd.png` | High-resolution Mermaid render (generated in CI) |
+| `architecture.svg` | Mermaid CLI vector render (feature-branch workflow) |
+| `architecture-hd.png` | High-resolution Mermaid render (feature-branch workflow) |
 | `pyproject.toml` | Minimal Python dependencies |
 
 ## Current API assumptions
 
-The code follows the current TypeSafe Python SDK pattern using `TypeSafeClient.system_one(...)` with a typed `Choice` question, and reads the returned choice and probability distribution. The helper `_typed_choice` tolerates both the SDK's typed `choices` view and `answers` view so the starter is resilient across the currently documented access patterns.
+The code uses `TypeSafeClient.system_one(...)` with a typed `Choice` question and
+reads either the SDK's typed `choices` view or its `answers` view. The
+[Choice contract](https://docs.typesafe.ai/primitives/choice) includes every
+configured label in the probability distribution. SDK 0.7.0 and 0.7.5 require the
+probability field but can decode empty/incomplete maps, so a typed answer alone
+does not make the metrics valid.
+
+Before scoring, the evaluator requires a configured predicted/expected label,
+exactly the configured probability keys, and finite numeric probabilities in
+`[0, 1]`. Empty evaluations are rejected. **This example's own sum tolerance is
+0.01** (plus floating-point roundoff): totals from 0.99 through 1.01 are accepted
+to accommodate approximately normalized, rounded values. That threshold is an
+explicit evaluation policy, not a precision guarantee from the SDK. Values are
+never filled, coerced, clipped, or renormalized; genuine zero probabilities remain
+zero.
+
+An invalid candidate evaluation is rejected with its constructed program and
+`null` validation metrics in `history.json`, not the incumbent's scores. If a
+proposal cannot be parsed into a program, its candidate remains `null`. Invalid baseline, training,
+or final hidden-test responses abort the run rather than produce successful
+metrics. The selection rule remains accuracy first, then lower Brier on an exact
+accuracy tie. No live model performance is established by the offline tests.
